@@ -1,0 +1,76 @@
+public class fetchSentiments {
+    public static String text = '';
+    //public static String updateSurveyID;
+    public static string sentimentModelId = 'CommunitySentiment';
+   
+    @AuraEnabled
+    public static string getStatus(string updateSurveyID){
+        for(Survey_Response__c selectedText : [SELECT Id,Survey_Comment__c FROM Survey_Response__c WHERE ID =: updateSurveyID]){
+            text = selectedText.Survey_Comment__c;
+            system.debug(text);
+            //updateSurveyID = selectedCase.Id;
+            updateSurvey(text, updateSurveyID);
+        }
+        return 'Success';
+    }
+    public static String getAccessToken() {
+        ContentVersion base64Content = [
+            SELECT  Title
+            ,VersionData
+            FROM    ContentVersion
+            WHERE   Title = 'einstein_platform'
+            OR      Title = 'predictive_services'
+            ORDER BY Title
+            LIMIT 1
+        ];
+       
+        String keyContents  = base64Content.VersionData.tostring();
+        keyContents         = keyContents.replace( '-----BEGIN RSA PRIVATE KEY-----', '' );
+        keyContents         = keyContents.replace( '-----END RSA PRIVATE KEY-----', '' );
+        keyContents         = keyContents.replace( '\n', '' );
+       
+        JWT jwt             = new JWT( 'RS256' );
+       
+        jwt.pkcs8           = keyContents;
+        jwt.iss             = 'developer.force.com';
+        jwt.sub             = 'bindupagad181997@gmail.com'; // Update with your own email ID
+        jwt.aud             = 'https://api.metamind.io/v1/oauth2/token';
+        jwt.exp             = String.valueOf(3600);
+        String access_token = JWTBearerFlow.getAccessToken( 'https://api.metamind.io/v1/oauth2/token', jwt );
+        return access_token;
+    }
+   
+    public static void updateSurvey(String text, Id updateSurveyID){
+        String key = getAccessToken();
+        Http http = new Http();
+        HttpRequest req = new HttpRequest();
+        req.setMethod( 'POST' );
+        req.setEndpoint( 'https://api.einstein.ai/v2/language/sentiment' );
+        req.setHeader( 'Authorization', 'Bearer ' + key );
+        req.setHeader( 'Content-type', 'application/json' );
+       
+        String body = '{\"modelId\":\"'+ sentimentModelId + '\",\"document\":\"' + text + '\"}';
+        req.setBody( body );
+       
+        HTTPResponse res = http.send( req );
+        system.debug('response body: '+res.getBody());
+        SentimentResponse resp = ( SentimentResponse ) JSON.deserialize( res.getBody(), SentimentResponse.class );
+        Map<Double,String> maplabelprobablity = new Map<Double,String>();
+        List<SentimentResponse.Probabilities > labelWithProbablity = new List<SentimentResponse.Probabilities >();
+        if(resp.probabilities != null && resp.probabilities.size()>0){
+            for(SentimentResponse.Probabilities selected : resp.Probabilities){
+                SentimentResponse.Probabilities sentimentRes = new SentimentResponse.Probabilities();
+                sentimentRes.label = selected.label;
+                sentimentRes.probability = selected.probability;
+                maplabelprobablity.put(sentimentRes.probability,sentimentRes.label);
+                labelWithProbablity.add(sentimentRes);
+            }
+        }
+        if(labelWithProbablity.size()>0){
+            Survey_Response__c updateSurvey = new Survey_Response__c();
+            updateSurvey.Id = updateSurveyID;
+            updateSurvey.Sentiments__c = maplabelprobablity.get(labelWithProbablity[0].probability);
+            update updateSurvey;
+        }          
+    }
+}
